@@ -4,9 +4,7 @@ A secure REST API built with FastAPI, JWT authentication, refresh tokens, role-b
 
 ## Live Demo
 
-> Paste your deployed backend URL here (e.g. https://taskr-api.onrender.com)
-
-**API Docs (Swagger):** `<your-url>/docs`
+https://task-manager-api-ubfp.onrender.com
 
 ---
 
