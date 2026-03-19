@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Taskr — Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0e0e0e; --surface: #161616; --surface-2: #1e1e1e;
+      --border: #2a2a2a; --text: #f0ede8; --muted: #7a7672;
+      --accent: #e8d44d; --danger: #e85d5d; --success: #5de8a0;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 20px 32px; border-bottom: 1px solid var(--border); }
+    .logo { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1.2rem; letter-spacing: -0.03em; }
+    .logo span { color: var(--accent); }
+    .logout-btn { background: none; border: 1.5px solid var(--border); border-radius: 8px; color: var(--muted); font-family: 'DM Sans', sans-serif; font-size: 0.82rem; padding: 7px 16px; cursor: pointer; transition: all 0.15s; }
+    .logout-btn:hover { color: var(--danger); border-color: var(--danger); }
+    main { max-width: 700px; margin: 0 auto; padding: 40px 24px; }
+    h1 { font-family: 'Syne', sans-serif; font-size: 1.8rem; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 8px; }
+    h1 em { color: var(--accent); font-style: italic; }
+    .subtitle { color: var(--muted); font-size: 0.88rem; margin-bottom: 36px; }
+    .card { background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px; padding: 24px; margin-bottom: 20px; }
+    .card h2 { font-family: 'Syne', sans-serif; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 16px; }
+    .field { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+    .field:last-child { border-bottom: none; }
+    .field-label { color: var(--muted); font-size: 0.82rem; }
+    .badge { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; font-size: 0.75rem; font-family: 'Syne', sans-serif; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .badge.admin { background: rgba(232,212,77,0.1); border-color: var(--accent); color: var(--accent); }
+    .badge.active { background: rgba(93,232,160,0.1); border-color: var(--success); color: var(--success); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th { text-align: left; font-family: 'Syne', sans-serif; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    td { padding: 10px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    .loading { color: var(--muted); font-size: 0.85rem; padding: 20px 0; }
+    .error-msg { color: var(--danger); font-size: 0.82rem; }
+    .token-box { background: #111; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 0.75rem; font-family: monospace; color: var(--muted); word-break: break-all; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">✦ <span>Taskr</span></div>
+    <button class="logout-btn" onclick="logout()">Logout</button>
+  </header>
+
+  <main>
+    <h1>Welcome back, <em id="username-display">…</em></h1>
+    <p class="subtitle" id="role-subtitle">Loading your profile…</p>
+
+    <!-- Profile Card -->
+    <div class="card">
+      <h2>Your Profile</h2>
+      <div id="profile-content" class="loading">Loading…</div>
+    </div>
+
+    <!-- Token Info -->
+    <div class="card">
+      <h2>Access Token (for API testing)</h2>
+      <div class="token-box" id="token-display">—</div>
+    </div>
+
+    <!-- Admin Panel -->
+    <div class="card" id="admin-panel" style="display:none">
+      <h2>Admin — All Users</h2>
+      <div id="users-content" class="loading">Loading…</div>
+    </div>
+  </main>
+
+  <script>
+    const API = '/api/v1';
+    let accessToken = localStorage.getItem('access_token');
+    let refreshToken = localStorage.getItem('refresh_token');
+
+    if (!accessToken) window.location.href = '/';
+
+    // Show token
+    document.getElementById('token-display').textContent = accessToken;
+
+    async function apiFetch(url, options = {}) {
+      const res = await fetch(url, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+          ...(options.headers || {}),
+        },
+      });
+
+      // Try refresh on 401
+      if (res.status === 401 && refreshToken) {
+        const refreshRes = await fetch(`${API}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        if (refreshRes.ok) {
+          const data = await refreshRes.json();
+          accessToken = data.access_token;
+          localStorage.setItem('access_token', accessToken);
+          document.getElementById('token-display').textContent = accessToken;
+          // Retry original request
+          return apiFetch(url, options);
+        } else {
+          logout();
+          return;
+        }
+      }
+      return res;
+    }
+
+    async function loadProfile() {
+      try {
+        const res = await apiFetch(`${API}/users/me`);
+        const user = await res.json();
+        if (!res.ok) throw new Error(user.detail);
+
+        document.getElementById('username-display').textContent = user.username;
+        document.getElementById('role-subtitle').textContent =
+          `Signed in as ${user.role} · ${user.email}`;
+
+        document.getElementById('profile-content').innerHTML = `
+          <div class="field">
+            <span class="field-label">ID</span>
+            <span>#${user.id}</span>
+          </div>
+          <div class="field">
+            <span class="field-label">Username</span>
+            <span>${escapeHtml(user.username)}</span>
+          </div>
+          <div class="field">
+            <span class="field-label">Email</span>
+            <span>${escapeHtml(user.email)}</span>
+          </div>
+          <div class="field">
+            <span class="field-label">Role</span>
+            <span class="badge ${user.role === 'admin' ? 'admin' : ''}">${user.role}</span>
+          </div>
+          <div class="field">
+            <span class="field-label">Status</span>
+            <span class="badge active">Active</span>
+          </div>
+          <div class="field">
+            <span class="field-label">Member Since</span>
+            <span>${new Date(user.created_at).toLocaleDateString()}</span>
+          </div>
+        `;
+
+        if (user.role === 'admin') loadUsers();
+
+      } catch (err) {
+        document.getElementById('profile-content').innerHTML =
+          `<div class="error-msg">${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function loadUsers() {
+      document.getElementById('admin-panel').style.display = 'block';
+      try {
+        const res = await apiFetch(`${API}/users/`);
+        const users = await res.json();
+        if (!res.ok) throw new Error(users.detail);
+
+        document.getElementById('users-content').innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Username</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${users.map(u => `
+                <tr>
+                  <td>#${u.id}</td>
+                  <td>${escapeHtml(u.username)}</td>
+                  <td>${escapeHtml(u.email)}</td>
+                  <td><span class="badge ${u.role === 'admin' ? 'admin' : ''}">${u.role}</span></td>
+                  <td><span class="badge ${u.is_active ? 'active' : ''}">${u.is_active ? 'Active' : 'Inactive'}</span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (err) {
+        document.getElementById('users-content').innerHTML =
+          `<div class="error-msg">${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function logout() {
+      try {
+        await apiFetch(`${API}/auth/logout`, {
+          method: 'POST',
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+      } catch (_) {}
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+      window.location.href = '/';
+    }
+
+    // XSS prevention
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    loadProfile();
+  </script>
+</body>
+</html>
