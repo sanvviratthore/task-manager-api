@@ -172,4 +172,3 @@ task-manager-api/
 ├── .gitignore
 └── README.md
 ```
-[README.md](https://github.com/user-attachments/files/26110606/README.md)
