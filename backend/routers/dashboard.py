@@ -1,133 +1,144 @@
-# backend/routers/dashboard.py
-# ──────────────────────────────────────────────────────────────────────────────
-# Dashboard Summary APIs
-#   All authenticated roles can access these read-only endpoints.
-# ──────────────────────────────────────────────────────────────────────────────
-
-from collections import defaultdict
-from datetime import date
-
-from fastapi import APIRouter, Depends
-from sqlalchemy import func
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func, and_
+from typing import Optional
+from collections import defaultdict
 
 from database import get_db
-from models import FinancialRecord, RecordType, User
-from schemas import CategoryTotal, DashboardSummary, MonthlyTrend, FinancialRecordOut
-from auth import get_current_active_user
+from models import User, FinancialRecord, RoleEnum, RecordTypeEnum
+from auth import require_analyst, require_viewer
 
-router = APIRouter(prefix="/api/v1/dashboard", tags=["Dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
-@router.get(
-    "/summary",
-    response_model=DashboardSummary,
-    summary="Full dashboard summary (all roles)",
-)
+def get_records_query(db: Session, current_user: User, date_from=None, date_to=None):
+    query = db.query(FinancialRecord)
+    if current_user.role != RoleEnum.admin:
+        query = query.filter(FinancialRecord.user_id == current_user.id)
+    if date_from:
+        query = query.filter(FinancialRecord.date >= date_from)
+    if date_to:
+        query = query.filter(FinancialRecord.date <= date_to)
+    return query
+
+
+# ── Summary (total income, expenses, net balance) ─────────────────────────────
+@router.get("/summary")
 def get_summary(
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    current_user: User = Depends(require_viewer),
     db: Session = Depends(get_db),
-    _:  User    = Depends(get_current_active_user),
 ):
-    active_records = (
-        db.query(FinancialRecord)
-        .filter(FinancialRecord.is_deleted == False)
-        .all()
-    )
+    records = get_records_query(db, current_user, date_from, date_to).all()
 
-    # ── Totals ─────────────────────────────────────────────────────────────────
-    total_income   = sum(r.amount for r in active_records if r.type == RecordType.income)
-    total_expenses = sum(r.amount for r in active_records if r.type == RecordType.expense)
-    net_balance    = total_income - total_expenses
+    total_income  = sum(r.amount for r in records if r.type == RecordTypeEnum.income)
+    total_expense = sum(r.amount for r in records if r.type == RecordTypeEnum.expense)
+    net_balance   = total_income - total_expense
 
-    # ── Category totals ────────────────────────────────────────────────────────
-    cat_map: dict[str, float] = defaultdict(float)
-    for r in active_records:
-        cat_map[r.category] += r.amount
-    category_totals = [
-        CategoryTotal(category=cat, total=round(total, 2))
-        for cat, total in sorted(cat_map.items())
-    ]
-
-    # ── Monthly trends ─────────────────────────────────────────────────────────
-    month_map: dict[str, dict[str, float]] = defaultdict(lambda: {"income": 0.0, "expense": 0.0})
-    for r in active_records:
-        month_key = r.date.strftime("%Y-%m")
-        month_map[month_key][r.type.value] += r.amount
-
-    monthly_trends = [
-        MonthlyTrend(
-            month   = month,
-            income  = round(vals["income"],  2),
-            expense = round(vals["expense"], 2),
-            net     = round(vals["income"] - vals["expense"], 2),
-        )
-        for month, vals in sorted(month_map.items())
-    ]
-
-    # ── Recent activity (last 10) ──────────────────────────────────────────────
-    recent = (
-        db.query(FinancialRecord)
-        .filter(FinancialRecord.is_deleted == False)
-        .order_by(FinancialRecord.date.desc(), FinancialRecord.created_at.desc())
-        .limit(10)
-        .all()
-    )
-
-    return DashboardSummary(
-        total_income    = round(total_income,   2),
-        total_expenses  = round(total_expenses, 2),
-        net_balance     = round(net_balance,    2),
-        category_totals = category_totals,
-        monthly_trends  = monthly_trends,
-        recent_records  = recent,
-    )
+    return {
+        "total_income":   round(total_income, 2),
+        "total_expenses": round(total_expense, 2),
+        "net_balance":    round(net_balance, 2),
+        "total_records":  len(records),
+        "date_from":      date_from,
+        "date_to":        date_to,
+    }
 
 
-# ── Standalone convenience endpoints (optional, but clean for a dashboard) ─────
+# ── Category-wise Totals ──────────────────────────────────────────────────────
+@router.get("/by-category")
+def get_by_category(
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    current_user: User = Depends(require_analyst),
+    db: Session = Depends(get_db),
+):
+    records = get_records_query(db, current_user, date_from, date_to).all()
 
-@router.get("/totals", summary="Income / expense / net totals only")
-def get_totals(db: Session = Depends(get_db), _: User = Depends(get_current_active_user)):
-    active = db.query(FinancialRecord).filter(FinancialRecord.is_deleted == False).all()
-    income  = round(sum(r.amount for r in active if r.type == RecordType.income),  2)
-    expense = round(sum(r.amount for r in active if r.type == RecordType.expense), 2)
-    return {"total_income": income, "total_expenses": expense, "net_balance": round(income - expense, 2)}
+    income_by_cat  = defaultdict(float)
+    expense_by_cat = defaultdict(float)
 
+    for r in records:
+        if r.type == RecordTypeEnum.income:
+            income_by_cat[r.category] += r.amount
+        else:
+            expense_by_cat[r.category] += r.amount
 
-@router.get("/category-breakdown", response_model=list[CategoryTotal], summary="Category-wise totals")
-def category_breakdown(db: Session = Depends(get_db), _: User = Depends(get_current_active_user)):
-    rows = (
-        db.query(FinancialRecord.category, func.sum(FinancialRecord.amount).label("total"))
-        .filter(FinancialRecord.is_deleted == False)
-        .group_by(FinancialRecord.category)
-        .order_by(FinancialRecord.category)
-        .all()
-    )
-    return [CategoryTotal(category=row.category, total=round(row.total, 2)) for row in rows]
+    all_categories = set(income_by_cat.keys()) | set(expense_by_cat.keys())
 
+    result = []
+    for cat in sorted(all_categories):
+        result.append({
+            "category":      cat,
+            "total_income":  round(income_by_cat.get(cat, 0), 2),
+            "total_expense": round(expense_by_cat.get(cat, 0), 2),
+            "net":           round(income_by_cat.get(cat, 0) - expense_by_cat.get(cat, 0), 2),
+        })
 
-@router.get("/monthly-trends", response_model=list[MonthlyTrend], summary="Monthly income vs expense trends")
-def monthly_trends(db: Session = Depends(get_db), _: User = Depends(get_current_active_user)):
-    active = db.query(FinancialRecord).filter(FinancialRecord.is_deleted == False).all()
-    month_map: dict[str, dict[str, float]] = defaultdict(lambda: {"income": 0.0, "expense": 0.0})
-    for r in active:
-        month_map[r.date.strftime("%Y-%m")][r.type.value] += r.amount
-    return [
-        MonthlyTrend(
-            month   = m,
-            income  = round(v["income"],  2),
-            expense = round(v["expense"], 2),
-            net     = round(v["income"] - v["expense"], 2),
-        )
-        for m, v in sorted(month_map.items())
-    ]
+    return {"categories": result, "total_categories": len(result)}
 
 
-@router.get("/recent", response_model=list[FinancialRecordOut], summary="Last 10 financial records")
-def recent_activity(db: Session = Depends(get_db), _: User = Depends(get_current_active_user)):
-    return (
-        db.query(FinancialRecord)
-        .filter(FinancialRecord.is_deleted == False)
-        .order_by(FinancialRecord.date.desc())
-        .limit(10)
-        .all()
-    )
+# ── Monthly Trends ────────────────────────────────────────────────────────────
+@router.get("/monthly-trends")
+def get_monthly_trends(
+    year: Optional[int] = Query(None, description="Filter by year e.g. 2026"),
+    current_user: User = Depends(require_analyst),
+    db: Session = Depends(get_db),
+):
+    query = db.query(FinancialRecord)
+    if current_user.role != RoleEnum.admin:
+        query = query.filter(FinancialRecord.user_id == current_user.id)
+    if year:
+        query = query.filter(FinancialRecord.date.startswith(str(year)))
+
+    records = query.order_by(FinancialRecord.date).all()
+
+    monthly = defaultdict(lambda: {"income": 0.0, "expense": 0.0})
+    for r in records:
+        month_key = r.date[:7]  # YYYY-MM
+        if r.type == RecordTypeEnum.income:
+            monthly[month_key]["income"] += r.amount
+        else:
+            monthly[month_key]["expense"] += r.amount
+
+    trends = []
+    for month in sorted(monthly.keys()):
+        data = monthly[month]
+        trends.append({
+            "month":         month,
+            "total_income":  round(data["income"], 2),
+            "total_expense": round(data["expense"], 2),
+            "net":           round(data["income"] - data["expense"], 2),
+        })
+
+    return {"trends": trends, "months_count": len(trends)}
+
+
+# ── Recent Activity ───────────────────────────────────────────────────────────
+@router.get("/recent")
+def get_recent(
+    limit: int = Query(10, ge=1, le=50),
+    current_user: User = Depends(require_viewer),
+    db: Session = Depends(get_db),
+):
+    query = db.query(FinancialRecord)
+    if current_user.role != RoleEnum.admin:
+        query = query.filter(FinancialRecord.user_id == current_user.id)
+
+    records = query.order_by(FinancialRecord.created_at.desc()).limit(limit).all()
+
+    return {
+        "recent_records": [
+            {
+                "id":       r.id,
+                "amount":   r.amount,
+                "type":     r.type,
+                "category": r.category,
+                "date":     r.date,
+                "notes":    r.notes,
+            }
+            for r in records
+        ],
+        "count": len(records),
+    }

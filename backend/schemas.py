@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr, field_validator, ConfigDict
 from typing import Optional
 from datetime import datetime
-from models import RoleEnum
+from models import RoleEnum, RecordTypeEnum
 import re
 
 
@@ -39,14 +39,6 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
-
-    @field_validator("username", "password")
-    @classmethod
-    def not_empty(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("Field cannot be empty.")
-        return v
 
 
 class TokenResponse(BaseModel):
@@ -98,87 +90,86 @@ class RoleUpdate(BaseModel):
     role: RoleEnum
 
 
+# ── Financial Record Schemas ───────────────────────────────────────────────────
+
+class FinancialRecordCreate(BaseModel):
+    amount: float
+    type: RecordTypeEnum
+    category: str
+    date: str
+    notes: Optional[str] = None
+
+    @field_validator("amount")
+    @classmethod
+    def amount_positive(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("Amount must be greater than 0.")
+        if v > 10_000_000:
+            raise ValueError("Amount is too large.")
+        return round(v, 2)
+
+    @field_validator("category")
+    @classmethod
+    def category_valid(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError("Category must be between 1 and 100 characters.")
+        return v
+
+    @field_validator("date")
+    @classmethod
+    def date_valid(cls, v: str) -> str:
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+            raise ValueError("Date must be in YYYY-MM-DD format.")
+        return v
+
+    @field_validator("notes")
+    @classmethod
+    def notes_valid(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and len(v) > 500:
+            raise ValueError("Notes must be 500 characters or fewer.")
+        return v
+
+
+class FinancialRecordUpdate(BaseModel):
+    amount: Optional[float] = None
+    type: Optional[RecordTypeEnum] = None
+    category: Optional[str] = None
+    date: Optional[str] = None
+    notes: Optional[str] = None
+
+    @field_validator("amount")
+    @classmethod
+    def amount_positive(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None:
+            if v <= 0:
+                raise ValueError("Amount must be greater than 0.")
+            return round(v, 2)
+        return v
+
+    @field_validator("date")
+    @classmethod
+    def date_valid(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+            raise ValueError("Date must be in YYYY-MM-DD format.")
+        return v
+
+
+class FinancialRecordOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    amount: float
+    type: RecordTypeEnum
+    category: str
+    date: str
+    notes: Optional[str]
+    user_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
 # ── Generic ────────────────────────────────────────────────────────────────────
 
 class MessageResponse(BaseModel):
     message: str
-
-# ──────────────────────────────────────────────────────────────────────────────
-# ADD THIS BLOCK to your existing backend/schemas.py
-# ──────────────────────────────────────────────────────────────────────────────
-
-from datetime import date as Date, datetime
-from typing import Optional
-from pydantic import BaseModel, Field, field_validator
-from models import RecordType   # already importable once you add the enum above
-
-
-# ── Request schemas ────────────────────────────────────────────────────────────
-
-class FinancialRecordCreate(BaseModel):
-    amount:   float        = Field(..., gt=0, description="Must be a positive number")
-    type:     RecordType
-    category: str          = Field(..., min_length=1, max_length=100)
-    date:     Date
-    notes:    Optional[str] = Field(None, max_length=1000)
-
-    @field_validator("category")
-    @classmethod
-    def category_not_blank(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("category cannot be blank")
-        return v.strip()
-
-
-class FinancialRecordUpdate(BaseModel):
-    amount:   Optional[float]       = Field(None, gt=0)
-    type:     Optional[RecordType]  = None
-    category: Optional[str]         = Field(None, min_length=1, max_length=100)
-    date:     Optional[Date]        = None
-    notes:    Optional[str]         = Field(None, max_length=1000)
-
-
-# ── Response schemas ───────────────────────────────────────────────────────────
-
-class FinancialRecordOut(BaseModel):
-    id:         int
-    amount:     float
-    type:       RecordType
-    category:   str
-    date:       Date
-    notes:      Optional[str]
-    created_by: int
-    created_at: Optional[datetime]
-    updated_at: Optional[datetime]
-
-    model_config = {"from_attributes": True}
-
-
-class PaginatedRecords(BaseModel):
-    total:   int
-    page:    int
-    limit:   int
-    records: list[FinancialRecordOut]
-
-
-# ── Dashboard schemas ──────────────────────────────────────────────────────────
-
-class CategoryTotal(BaseModel):
-    category: str
-    total:    float
-
-
-class MonthlyTrend(BaseModel):
-    month:    str          # e.g. "2024-03"
-    income:   float
-    expense:  float
-    net:      float
-
-
-class DashboardSummary(BaseModel):
-    total_income:    float
-    total_expenses:  float
-    net_balance:     float
-    category_totals: list[CategoryTotal]
-    monthly_trends:  list[MonthlyTrend]
-    recent_records:  list[FinancialRecordOut]

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Enum, Float, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
@@ -7,7 +7,8 @@ from database import Base
 
 class RoleEnum(str, enum.Enum):
     admin = "admin"
-    user = "user"
+    analyst = "analyst"
+    viewer = "viewer"
 
 
 class User(Base):
@@ -17,11 +18,12 @@ class User(Base):
     email       = Column(String(255), unique=True, index=True, nullable=False)
     username    = Column(String(100), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
-    role        = Column(Enum(RoleEnum), default=RoleEnum.user, nullable=False)
+    role        = Column(Enum(RoleEnum), default=RoleEnum.viewer, nullable=False)
     is_active   = Column(Boolean, default=True)
     created_at  = Column(DateTime(timezone=True), server_default=func.now())
 
-    tokens = relationship("RefreshToken", back_populates="owner", cascade="all, delete")
+    tokens  = relationship("RefreshToken", back_populates="owner", cascade="all, delete")
+    records = relationship("FinancialRecord", back_populates="owner", cascade="all, delete")
 
 
 class RefreshToken(Base):
@@ -36,31 +38,23 @@ class RefreshToken(Base):
 
     owner = relationship("User", back_populates="tokens")
 
-import enum
-from sqlalchemy import (
-    Column, Integer, String, Float, Date, Text,
-    Boolean, ForeignKey, Enum as SAEnum, DateTime
-)
-from sqlalchemy.sql import func
 
-
-class RecordType(str, enum.Enum):
+class RecordTypeEnum(str, enum.Enum):
     income  = "income"
     expense = "expense"
 
 
-class FinancialRecord(Base):          # Base is already defined in your models.py
+class FinancialRecord(Base):
     __tablename__ = "financial_records"
 
     id          = Column(Integer, primary_key=True, index=True)
-    amount      = Column(Float,   nullable=False)
-    type        = Column(SAEnum(RecordType), nullable=False)
+    amount      = Column(Float, nullable=False)
+    type        = Column(Enum(RecordTypeEnum), nullable=False)
     category    = Column(String(100), nullable=False)
-    date        = Column(Date,    nullable=False)
-    notes       = Column(Text,    nullable=True)
-    is_deleted  = Column(Boolean, default=False)          # soft-delete flag
-
-    # who created this record
-    created_by  = Column(Integer, ForeignKey("users.id"), nullable=False)
+    date        = Column(String(10), nullable=False)  # YYYY-MM-DD
+    notes       = Column(Text, nullable=True)
+    user_id     = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at  = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at  = Column(DateTime(timezone=True), onupdate=func.now())
+    updated_at  = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    owner = relationship("User", back_populates="records")
