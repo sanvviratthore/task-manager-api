@@ -102,3 +102,83 @@ class RoleUpdate(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ADD THIS BLOCK to your existing backend/schemas.py
+# ──────────────────────────────────────────────────────────────────────────────
+
+from datetime import date as Date, datetime
+from typing import Optional
+from pydantic import BaseModel, Field, field_validator
+from models import RecordType   # already importable once you add the enum above
+
+
+# ── Request schemas ────────────────────────────────────────────────────────────
+
+class FinancialRecordCreate(BaseModel):
+    amount:   float        = Field(..., gt=0, description="Must be a positive number")
+    type:     RecordType
+    category: str          = Field(..., min_length=1, max_length=100)
+    date:     Date
+    notes:    Optional[str] = Field(None, max_length=1000)
+
+    @field_validator("category")
+    @classmethod
+    def category_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("category cannot be blank")
+        return v.strip()
+
+
+class FinancialRecordUpdate(BaseModel):
+    amount:   Optional[float]       = Field(None, gt=0)
+    type:     Optional[RecordType]  = None
+    category: Optional[str]         = Field(None, min_length=1, max_length=100)
+    date:     Optional[Date]        = None
+    notes:    Optional[str]         = Field(None, max_length=1000)
+
+
+# ── Response schemas ───────────────────────────────────────────────────────────
+
+class FinancialRecordOut(BaseModel):
+    id:         int
+    amount:     float
+    type:       RecordType
+    category:   str
+    date:       Date
+    notes:      Optional[str]
+    created_by: int
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
+    model_config = {"from_attributes": True}
+
+
+class PaginatedRecords(BaseModel):
+    total:   int
+    page:    int
+    limit:   int
+    records: list[FinancialRecordOut]
+
+
+# ── Dashboard schemas ──────────────────────────────────────────────────────────
+
+class CategoryTotal(BaseModel):
+    category: str
+    total:    float
+
+
+class MonthlyTrend(BaseModel):
+    month:    str          # e.g. "2024-03"
+    income:   float
+    expense:  float
+    net:      float
+
+
+class DashboardSummary(BaseModel):
+    total_income:    float
+    total_expenses:  float
+    net_balance:     float
+    category_totals: list[CategoryTotal]
+    monthly_trends:  list[MonthlyTrend]
+    recent_records:  list[FinancialRecordOut]

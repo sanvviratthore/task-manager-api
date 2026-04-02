@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from database import engine, Base
 from routers.auth import router as auth_router
 from routers.users import router as users_router
+from routers import finance, dashboard
 
 load_dotenv()
 
@@ -55,6 +56,9 @@ app.add_middleware(
 # ── Routers ────────────────────────────────────────────────────────────────────
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
+
+app.include_router(finance.router)
+app.include_router(dashboard.router)
 
 # ── Serve Frontend ─────────────────────────────────────────────────────────────
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
