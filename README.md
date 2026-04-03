@@ -7,7 +7,7 @@ A secure, role-based finance dashboard backend built on top of [Taskr API](https
 
 ---
 
-## How This Relates to the Assignment
+## Note
 
 This project was originally built as a general-purpose task management API with JWT auth, RBAC, rate limiting, and SQLite persistence. The finance assignment maps almost perfectly onto that foundation:
 
@@ -128,7 +128,7 @@ Swagger UI: http://localhost:8000/docs
 | analyst | ✅ | ✅ | ❌ | ❌ | ❌ |
 | admin | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-Access control is enforced at the router level via the `require_role()` dependency in `auth.py`. Viewers and analysts are blocked at the API layer — not just the frontend.
+Access control is enforced at the router level via the `require_role()` dependency in `auth.py`. Viewers and analysts are blocked at the API layer, not just the frontend.
 
 ---
 
