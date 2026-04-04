@@ -4,11 +4,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 from dotenv import load_dotenv
-
 from database import engine, Base
 from routers.auth import router as auth_router
 from routers.users import router as users_router
 from routers import finance, dashboard
+from sqlalchemy.orm import Session
+from fastapi import Depends
+from database import get_db
 
 load_dotenv()
 
@@ -72,6 +74,13 @@ def serve_frontend():
         return FileResponse(index)
     return {"message": "Taskr API is running. Visit /docs for the API reference."}
 
+@app.get("/admin-setup-temp-delete-me")
+def make_admin(db: Session = Depends(get_db)):
+    from models import User, RoleEnum
+    u = db.query(User).filter(User.username == "sanvi").first()
+    u.role = RoleEnum.admin
+    db.commit()
+    return {"done": True, "role": str(u.role)}
 # ── Health Check ───────────────────────────────────────────────────────────────
 @app.get("/health", tags=["Health"])
 def health():

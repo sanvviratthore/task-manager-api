@@ -16,7 +16,7 @@
     .logo { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1.5rem; letter-spacing: -0.03em; margin-bottom: 40px; }
     .logo span { color: var(--accent); }
     .card { background: var(--surface); border: 1.5px solid var(--border); border-radius: 16px; padding: 36px; width: 100%; max-width: 400px; }
-    .tabs { display: flex; gap: 0; margin-bottom: 28px; border-bottom: 1.5px solid var(--border); }
+    .tabs { display: flex; margin-bottom: 28px; border-bottom: 1.5px solid var(--border); }
     .tab { flex: 1; padding: 10px; font-family: 'Syne', sans-serif; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; background: none; border: none; color: var(--muted); cursor: pointer; transition: color 0.15s; padding-bottom: 12px; border-bottom: 2px solid transparent; margin-bottom: -1.5px; }
     .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
     .form { display: flex; flex-direction: column; gap: 14px; }
@@ -31,6 +31,21 @@
     .msg { font-size: 0.82rem; padding: 10px 14px; border-radius: 8px; margin-top: 4px; display: none; }
     .msg.error { background: rgba(232,93,93,0.1); color: var(--danger); display: block; }
     .msg.success { background: rgba(93,232,160,0.1); color: var(--success); display: block; }
+    .forgot-link { background: none; border: none; color: var(--muted); font-family: 'DM Sans', sans-serif; font-size: 0.78rem; cursor: pointer; text-align: right; padding: 0; margin-top: -6px; transition: color 0.15s; text-decoration: underline; text-underline-offset: 3px; }
+    .forgot-link:hover { color: var(--accent); }
+
+    /* Forgot password overlay */
+    .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; padding: 24px; }
+    .overlay.open { display: flex; }
+    .modal { background: var(--surface); border: 1.5px solid var(--border); border-radius: 16px; padding: 32px; width: 100%; max-width: 380px; }
+    .modal h3 { font-family: 'Syne', sans-serif; font-size: 1rem; font-weight: 700; margin-bottom: 8px; }
+    .modal p { font-size: 0.82rem; color: var(--muted); margin-bottom: 20px; line-height: 1.5; }
+    .modal-btns { display: flex; gap: 10px; margin-top: 16px; }
+    .btn-secondary { flex: 1; padding: 11px; background: none; color: var(--muted); border: 1.5px solid var(--border); border-radius: 10px; font-family: 'Syne', sans-serif; font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer; transition: all 0.15s; }
+    .btn-secondary:hover { border-color: var(--muted); color: var(--text); }
+    .btn-primary { flex: 1; padding: 11px; background: var(--accent); color: #0e0e0e; border: none; border-radius: 10px; font-family: 'Syne', sans-serif; font-weight: 700; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer; transition: background 0.15s; }
+    .btn-primary:hover { background: #c9b835; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -50,6 +65,7 @@
       <div>
         <label for="l-password">Password</label>
         <input id="l-password" type="password" autocomplete="current-password" required/>
+        <button type="button" class="forgot-link" onclick="openForgot()">Forgot password?</button>
       </div>
       <div id="login-msg" class="msg"></div>
       <button class="btn" type="submit" id="login-btn">Login</button>
@@ -75,10 +91,26 @@
     </form>
   </div>
 
+  <!-- Forgot Password Modal -->
+  <div class="overlay" id="forgot-overlay" onclick="closeForgotOnBackdrop(event)">
+    <div class="modal">
+      <h3>Reset Password</h3>
+      <p>Enter your email address and we'll send you a reset link if an account exists.</p>
+      <div>
+        <label for="forgot-email">Email</label>
+        <input id="forgot-email" type="email" placeholder="you@example.com"/>
+      </div>
+      <div id="forgot-msg" class="msg" style="margin-top:10px"></div>
+      <div class="modal-btns">
+        <button class="btn-secondary" onclick="closeForgot()">Cancel</button>
+        <button class="btn-primary" id="forgot-btn" onclick="handleForgot()">Send Link</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const API = '/api/v1';
 
-    // Redirect if already logged in
     if (localStorage.getItem('access_token')) {
       window.location.href = '/static/dashboard.html';
     }
@@ -97,6 +129,7 @@
       el.className = `msg ${type}`;
     }
 
+    // ── Login ──────────────────────────────────────────────────────────────────
     async function handleLogin(e) {
       e.preventDefault();
       const btn = document.getElementById('login-btn');
@@ -126,6 +159,7 @@
       }
     }
 
+    // ── Register → auto-login ──────────────────────────────────────────────────
     async function handleRegister(e) {
       e.preventDefault();
       const btn = document.getElementById('register-btn');
@@ -137,6 +171,7 @@
       const password = document.getElementById('r-password').value;
 
       try {
+        // Step 1: Register
         const res = await fetch(`${API}/auth/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -144,19 +179,77 @@
         });
         const data = await res.json();
         if (!res.ok) {
-          // Handle pydantic validation errors
           const detail = Array.isArray(data.detail)
             ? data.detail.map(e => e.msg).join(' ')
             : data.detail;
           throw new Error(detail || 'Registration failed.');
         }
-        showMsg('register-msg', 'Account created! You can now log in.', 'success');
-        setTimeout(() => switchTab('login'), 1500);
+
+        // Step 2: Auto-login with same credentials
+        showMsg('register-msg', 'Account created! Signing you in…', 'success');
+        btn.textContent = 'Signing in…';
+
+        const loginRes = await fetch(`${API}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        const loginData = await loginRes.json();
+        if (!loginRes.ok) throw new Error('Registered! Please log in manually.');
+
+        localStorage.setItem('access_token', loginData.access_token);
+        localStorage.setItem('refresh_token', loginData.refresh_token);
+        window.location.href = '/static/dashboard.html';
+
       } catch (err) {
         showMsg('register-msg', err.message, 'error');
-      } finally {
         btn.disabled = false;
         btn.textContent = 'Create Account';
+      }
+    }
+
+    // ── Forgot Password ────────────────────────────────────────────────────────
+    function openForgot() {
+      document.getElementById('forgot-overlay').classList.add('open');
+      document.getElementById('forgot-email').focus();
+    }
+
+    function closeForgot() {
+      document.getElementById('forgot-overlay').classList.remove('open');
+      document.getElementById('forgot-msg').className = 'msg';
+      document.getElementById('forgot-email').value = '';
+      const btn = document.getElementById('forgot-btn');
+      btn.disabled = false;
+      btn.textContent = 'Send Link';
+    }
+
+    function closeForgotOnBackdrop(e) {
+      if (e.target === document.getElementById('forgot-overlay')) closeForgot();
+    }
+
+    async function handleForgot() {
+      const email = document.getElementById('forgot-email').value.trim();
+      if (!email) {
+        showMsg('forgot-msg', 'Please enter your email.', 'error');
+        return;
+      }
+      const btn = document.getElementById('forgot-btn');
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+
+      try {
+        await fetch(`${API}/auth/password-reset`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        // Always show success regardless — prevents email enumeration
+        showMsg('forgot-msg', 'If that email exists, a reset link has been sent.', 'success');
+        btn.textContent = 'Sent ✓';
+        setTimeout(closeForgot, 2500);
+      } catch (_) {
+        showMsg('forgot-msg', 'Something went wrong. Please try again.', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Send Link';
       }
     }
   </script>
