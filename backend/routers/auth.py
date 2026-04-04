@@ -68,10 +68,6 @@ def login(
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled.")
 
-    # One-time fix: promote sanvi to admin if not already
-    if user.email == "rathoresanvi3@gmail.com" and user.role != RoleEnum.admin:
-        user.role = RoleEnum.admin
-        db.commit()
 
     access_token = create_access_token({"sub": str(user.id), "role": user.role})
     refresh_token_str, expires_at = create_refresh_token({"sub": str(user.id)})
