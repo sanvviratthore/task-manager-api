@@ -1,16 +1,14 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 from dotenv import load_dotenv
-from database import engine, Base
+from database import engine, Base, get_db
 from routers.auth import router as auth_router
 from routers.users import router as users_router
 from routers import finance, dashboard
 from sqlalchemy.orm import Session
-from fastapi import Depends
-from database import get_db
 
 load_dotenv()
 
@@ -49,7 +47,7 @@ ALLOWED_ORIGINS = os.getenv(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,  # Never use ["*"] in production
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
@@ -58,7 +56,6 @@ app.add_middleware(
 # ── Routers ────────────────────────────────────────────────────────────────────
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
-
 app.include_router(finance.router)
 app.include_router(dashboard.router)
 
@@ -67,11 +64,29 @@ frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.exists(frontend_path):
     app.mount("/static", StaticFiles(directory=frontend_path), name="static")
 
+@app.get("/", include_in_schema=False)
+def serve_frontend():
+    index = os.path.join(frontend_path, "index.html")
+    if os.path.exists(index):
+        return FileResponse(index)
+    return {"message": "Taskr API is running. Visit /docs for the API reference."}
+
+# ── Temp: debug + admin setup (DELETE AFTER USE) ───────────────────────────────
 @app.get("/debug-users")
 def debug_users(db: Session = Depends(get_db)):
     from models import User
     users = db.query(User).all()
     return [{"id": u.id, "username": u.username, "email": u.email, "role": str(u.role)} for u in users]
+
+@app.get("/admin-setup-temp-delete-me/{user_id}")
+def make_admin(user_id: int, db: Session = Depends(get_db)):
+    from models import User, RoleEnum
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        return {"error": "User not found"}
+    u.role = RoleEnum.admin
+    db.commit()
+    return {"done": True, "username": u.username, "role": str(u.role)}
 
 # ── Health Check ───────────────────────────────────────────────────────────────
 @app.get("/health", tags=["Health"])
