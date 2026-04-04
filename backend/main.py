@@ -71,22 +71,6 @@ def serve_frontend():
         return FileResponse(index)
     return {"message": "Taskr API is running. Visit /docs for the API reference."}
 
-# ── Temp: debug + admin setup (DELETE AFTER USE) ───────────────────────────────
-@app.get("/debug-users")
-def debug_users(db: Session = Depends(get_db)):
-    from models import User
-    users = db.query(User).all()
-    return [{"id": u.id, "username": u.username, "email": u.email, "role": str(u.role)} for u in users]
-
-@app.get("/admin-setup-temp-delete-me/{user_id}")
-def make_admin(user_id: int, db: Session = Depends(get_db)):
-    from models import User, RoleEnum
-    u = db.query(User).filter(User.id == user_id).first()
-    if not u:
-        return {"error": "User not found"}
-    u.role = RoleEnum.admin
-    db.commit()
-    return {"done": True, "username": u.username, "role": str(u.role)}
 
 # ── Health Check ───────────────────────────────────────────────────────────────
 @app.get("/health", tags=["Health"])
