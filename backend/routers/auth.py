@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 
 from database import get_db
-from models import User, UserSession
+from models import User, UserSession, RoleEnum
 from schemas import (
     RegisterRequest, LoginRequest, TokenResponse,
     RefreshRequest, AccessTokenResponse, MessageResponse, UserSessionOut
@@ -39,9 +39,15 @@ def register(
     db.add(user)
     db.commit()
     db.refresh(user)
+
     # Set audit fields
     user.created_by = user.id
     user.updated_by = user.id
+
+    # First registered user gets admin role automatically
+    if db.query(User).count() == 1:
+        user.role = RoleEnum.admin
+
     db.commit()
     return {"message": "Account created successfully. You can now log in."}
 
@@ -61,6 +67,11 @@ def login(
         raise HTTPException(status_code=401, detail="Invalid username or password.")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled.")
+
+    # One-time fix: promote sanvi to admin if not already
+    if user.email == "rathoresanvi3@gmail.com" and user.role != RoleEnum.admin:
+        user.role = RoleEnum.admin
+        db.commit()
 
     access_token = create_access_token({"sub": str(user.id), "role": user.role})
     refresh_token_str, expires_at = create_refresh_token({"sub": str(user.id)})
