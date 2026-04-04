@@ -67,15 +67,11 @@ frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.exists(frontend_path):
     app.mount("/static", StaticFiles(directory=frontend_path), name="static")
 
-@app.get("/admin-setup-temp-delete-me")
-def make_admin(db: Session = Depends(get_db)):
-    from models import User, RoleEnum
-    u = db.query(User).filter(User.email == "rathoresanvi3@gmail.com").first()
-    if not u:
-        return {"error": "User not found"}
-    u.role = RoleEnum.admin
-    db.commit()
-    return {"done": True, "username": u.username, "role": str(u.role)}
+@app.get("/debug-users")
+def debug_users(db: Session = Depends(get_db)):
+    from models import User
+    users = db.query(User).all()
+    return [{"id": u.id, "username": u.username, "email": u.email, "role": str(u.role)} for u in users]
 
 # ── Health Check ───────────────────────────────────────────────────────────────
 @app.get("/health", tags=["Health"])
