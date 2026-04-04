@@ -1,22 +1,41 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+# backend/routers/finance.py
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
-from typing import List, Optional
 
 from database import get_db
-from models import User, FinancialRecord, RoleEnum
-from schemas import FinancialRecordCreate, FinancialRecordUpdate, FinancialRecordOut, MessageResponse
-from auth import get_current_active_user, require_analyst, require_viewer
+from models import FinancialRecord, RecordTypeEnum, User
+from schemas import (
+    FinancialRecordCreate,
+    FinancialRecordOut,
+    FinancialRecordUpdate,
+    PaginatedRecords,
+)
+from auth import get_current_active_user, require_admin
 
-router = APIRouter(prefix="/finance", tags=["Finance"])
+router = APIRouter(prefix="/api/v1/finance", tags=["Finance Records"])
 
 
-# ── Create Record (admin + analyst only) ──────────────────────────────────────
-@router.post("/records", response_model=FinancialRecordOut, status_code=201)
+def _get_record_or_404(record_id: int, db: Session) -> FinancialRecord:
+    record = (
+        db.query(FinancialRecord)
+        .filter(FinancialRecord.id == record_id)
+        .first()
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+    return record
+
+
+# ── CREATE ─────────────────────────────────────────────────────────────────────
+
+@router.post("/", response_model=FinancialRecordOut, status_code=status.HTTP_201_CREATED,
+             summary="Create a financial record (Admin only)")
 def create_record(
     payload: FinancialRecordCreate,
-    current_user: User = Depends(require_analyst),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
 ):
     record = FinancialRecord(
         amount=payload.amount,
@@ -25,6 +44,8 @@ def create_record(
         date=payload.date,
         notes=payload.notes,
         user_id=current_user.id,
+        created_by=current_user.id,
+        updated_by=current_user.id,
     )
     db.add(record)
     db.commit()
@@ -32,22 +53,21 @@ def create_record(
     return record
 
 
-# ── List Records (all roles, with filters) ────────────────────────────────────
-@router.get("/records", response_model=List[FinancialRecordOut])
+# ── LIST ───────────────────────────────────────────────────────────────────────
+
+@router.get("/", response_model=PaginatedRecords,
+            summary="List financial records (all roles)")
 def list_records(
-    type: Optional[str] = Query(None, description="Filter by type: income or expense"),
-    category: Optional[str] = Query(None, description="Filter by category"),
-    date_from: Optional[str] = Query(None, description="Filter from date (YYYY-MM-DD)"),
-    date_to: Optional[str] = Query(None, description="Filter to date (YYYY-MM-DD)"),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
-    current_user: User = Depends(require_viewer),
-    db: Session = Depends(get_db),
+    type:      Optional[RecordTypeEnum] = Query(None),
+    category:  Optional[str]            = Query(None),
+    date_from: Optional[str]            = Query(None, description="YYYY-MM-DD"),
+    date_to:   Optional[str]            = Query(None, description="YYYY-MM-DD"),
+    page:      int                      = Query(1,  ge=1),
+    limit:     int                      = Query(20, ge=1, le=100),
+    db:        Session                  = Depends(get_db),
+    _: User = Depends(get_current_active_user),
 ):
-    # Admins see all records, others see only their own
     query = db.query(FinancialRecord)
-    if current_user.role != RoleEnum.admin:
-        query = query.filter(FinancialRecord.user_id == current_user.id)
 
     if type:
         query = query.filter(FinancialRecord.type == type)
@@ -58,68 +78,67 @@ def list_records(
     if date_to:
         query = query.filter(FinancialRecord.date <= date_to)
 
-    return query.order_by(FinancialRecord.date.desc()).offset(skip).limit(limit).all()
+    total   = query.count()
+    records = (
+        query.order_by(FinancialRecord.date.desc())
+             .offset((page - 1) * limit)
+             .limit(limit)
+             .all()
+    )
+    return PaginatedRecords(total=total, page=page, limit=limit, records=records)
 
 
-# ── Get Single Record ─────────────────────────────────────────────────────────
-@router.get("/records/{record_id}", response_model=FinancialRecordOut)
+# ── GET SINGLE ─────────────────────────────────────────────────────────────────
+
+@router.get("/{record_id}", response_model=FinancialRecordOut,
+            summary="Get a single record (all roles)")
 def get_record(
     record_id: int,
-    current_user: User = Depends(require_viewer),
     db: Session = Depends(get_db),
+    _: User = Depends(get_current_active_user),
 ):
-    record = db.query(FinancialRecord).filter(FinancialRecord.id == record_id).first()
-    if not record:
-        raise HTTPException(status_code=404, detail="Record not found.")
-    # Non-admins can only view their own records
-    if current_user.role != RoleEnum.admin and record.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Access denied.")
-    return record
+    return _get_record_or_404(record_id, db)
 
 
-# ── Update Record (admin + analyst, own records only unless admin) ─────────────
-@router.patch("/records/{record_id}", response_model=FinancialRecordOut)
+# ── UPDATE ─────────────────────────────────────────────────────────────────────
+
+@router.patch("/{record_id}", response_model=FinancialRecordOut,
+              summary="Update a financial record (Admin only)")
 def update_record(
     record_id: int,
     payload: FinancialRecordUpdate,
-    current_user: User = Depends(require_analyst),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
 ):
-    record = db.query(FinancialRecord).filter(FinancialRecord.id == record_id).first()
-    if not record:
-        raise HTTPException(status_code=404, detail="Record not found.")
-    if current_user.role != RoleEnum.admin and record.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="You can only update your own records.")
+    record = _get_record_or_404(record_id, db)
 
-    if payload.amount is not None:
-        record.amount = payload.amount
-    if payload.type is not None:
-        record.type = payload.type
-    if payload.category is not None:
-        record.category = payload.category
-    if payload.date is not None:
-        record.date = payload.date
-    if payload.notes is not None:
-        record.notes = payload.notes
+    # Optimistic locking check
+    if record.version != payload.version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Record was modified by someone else (expected version {record.version}).",
+        )
 
+    update_data = payload.model_dump(exclude_unset=True, exclude={"version"})
+    for field, value in update_data.items():
+        setattr(record, field, value)
+
+    record.version    += 1
+    record.updated_by  = current_user.id
     db.commit()
     db.refresh(record)
     return record
 
 
-# ── Delete Record (admin only) ────────────────────────────────────────────────
-@router.delete("/records/{record_id}", response_model=MessageResponse)
+# ── DELETE (soft via is_deleted if you add it, or hard delete) ─────────────────
+
+@router.delete("/{record_id}", status_code=status.HTTP_204_NO_CONTENT,
+               summary="Delete a financial record (Admin only)")
 def delete_record(
     record_id: int,
-    current_user: User = Depends(require_analyst),
     db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
 ):
-    record = db.query(FinancialRecord).filter(FinancialRecord.id == record_id).first()
-    if not record:
-        raise HTTPException(status_code=404, detail="Record not found.")
-    if current_user.role != RoleEnum.admin and record.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="You can only delete your own records.")
-
+    record = _get_record_or_404(record_id, db)
     db.delete(record)
     db.commit()
-    return {"message": f"Record {record_id} deleted successfully."}

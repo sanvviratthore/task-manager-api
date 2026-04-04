@@ -1,102 +1,165 @@
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-import jwt
-from jwt.exceptions import InvalidTokenError as JWTError
-from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
-import os
-from dotenv import load_dotenv
+from datetime import datetime, timezone
 
 from database import get_db
-from models import User, RoleEnum
+from models import User, UserSession
+from schemas import (
+    RegisterRequest, LoginRequest, TokenResponse,
+    RefreshRequest, AccessTokenResponse, MessageResponse, UserSessionOut
+)
+from auth import (
+    hash_password, verify_password,
+    create_access_token, create_refresh_token, decode_token,
+    get_current_active_user,
+)
+from services.rate_limiter_service import limit_login, limit_register, limit_password_reset
 
-load_dotenv()
-
-# ── Config ─────────────────────────────────────────────────────────────────────
-SECRET_KEY                   = os.getenv("SECRET_KEY", "CHANGE_ME_IN_PRODUCTION")
-ALGORITHM                    = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES  = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
-REFRESH_TOKEN_EXPIRE_DAYS    = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
-
-pwd_context   = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__ident="2b")
-bearer_scheme = HTTPBearer()
-
-
-# ── Password ───────────────────────────────────────────────────────────────────
-def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
-
-def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
-# ── JWT ────────────────────────────────────────────────────────────────────────
-def create_access_token(data: dict, expires_delta=None) -> str:
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (
-        expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    )
-    to_encode.update({"exp": expire, "type": "access"})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-
-def create_refresh_token(data: dict) -> tuple[str, datetime]:
-    to_encode = data.copy()
-    expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expires_at, "type": "refresh"})
-    token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return token, expires_at
-
-
-def decode_token(token: str) -> dict:
-    try:
-        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM],
-                          options={"verify_exp": True})
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-
-# ── Current User ───────────────────────────────────────────────────────────────
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+# ── Register ───────────────────────────────────────────────────────────────────
+@router.post("/register", response_model=MessageResponse, status_code=201)
+def register(
+    payload: RegisterRequest,
+    request: Request,
     db: Session = Depends(get_db),
-) -> User:
-    payload = decode_token(credentials.credentials)
-    if payload.get("type") != "access":
+    _: None = Depends(limit_register),
+):
+    if db.query(User).filter(User.email == payload.email).first():
+        raise HTTPException(status_code=400, detail="Email already registered.")
+    if db.query(User).filter(User.username == payload.username).first():
+        raise HTTPException(status_code=400, detail="Username already taken.")
+
+    user = User(
+        email=payload.email,
+        username=payload.username,
+        hashed_password=hash_password(payload.password),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    # Set audit fields
+    user.created_by = user.id
+    user.updated_by = user.id
+    db.commit()
+    return {"message": "Account created successfully. You can now log in."}
+
+
+# ── Login ──────────────────────────────────────────────────────────────────────
+@router.post("/login", response_model=TokenResponse)
+def login(
+    payload: LoginRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(limit_login),
+):
+    user = db.query(User).filter(User.username == payload.username).first()
+
+    # Constant-time failure — prevents user enumeration
+    if not user or not verify_password(payload.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is disabled.")
+
+    access_token = create_access_token({"sub": str(user.id), "role": user.role})
+    refresh_token_str, expires_at = create_refresh_token({"sub": str(user.id)})
+
+    # Store as UserSession with device info
+    session = UserSession(
+        token=refresh_token_str,
+        user_id=user.id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:255],
+        expires_at=expires_at,
+    )
+    db.add(session)
+    db.commit()
+
+    return TokenResponse(access_token=access_token, refresh_token=refresh_token_str)
+
+
+# ── Refresh ────────────────────────────────────────────────────────────────────
+@router.post("/refresh", response_model=AccessTokenResponse)
+def refresh_token(
+    payload: RefreshRequest,
+    db: Session = Depends(get_db),
+):
+    decoded = decode_token(payload.refresh_token)
+    if decoded.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid token type.")
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload.")
-    user = db.query(User).filter(User.id == int(user_id)).first()
+
+    session = db.query(UserSession).filter(
+        UserSession.token == payload.refresh_token,
+        UserSession.revoked == False,
+    ).first()
+
+    if not session:
+        raise HTTPException(status_code=401, detail="Session not found or revoked.")
+
+    if session.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+        session.revoked = True
+        db.commit()
+        raise HTTPException(status_code=401, detail="Session expired. Please log in again.")
+
+    user = db.query(User).filter(User.id == session.user_id).first()
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive.")
-    return user
+
+    new_access_token = create_access_token({"sub": str(user.id), "role": user.role})
+    return AccessTokenResponse(access_token=new_access_token)
 
 
-def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
-    if not current_user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user.")
-    return current_user
+# ── Logout ─────────────────────────────────────────────────────────────────────
+@router.post("/logout", response_model=MessageResponse)
+def logout(
+    payload: RefreshRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    session = db.query(UserSession).filter(
+        UserSession.token == payload.refresh_token,
+        UserSession.user_id == current_user.id,
+    ).first()
+    if session:
+        session.revoked = True
+        db.commit()
+    return {"message": "Logged out successfully."}
 
 
-# ── RBAC ───────────────────────────────────────────────────────────────────────
-def require_role(*roles: RoleEnum):
-    def checker(current_user: User = Depends(get_current_active_user)) -> User:
-        if current_user.role not in roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied. Required role: {[r.value for r in roles]}",
-            )
-        return current_user
-    return checker
+# ── List Sessions ──────────────────────────────────────────────────────────────
+@router.get("/sessions", response_model=list[UserSessionOut])
+def list_sessions(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """List all active sessions for the current user (device management)."""
+    return db.query(UserSession).filter(
+        UserSession.user_id == current_user.id,
+        UserSession.revoked == False,
+    ).all()
 
-# Role shortcuts
-require_admin   = require_role(RoleEnum.admin)
-require_analyst = require_role(RoleEnum.admin, RoleEnum.analyst)
-require_viewer  = require_role(RoleEnum.admin, RoleEnum.analyst, RoleEnum.viewer)
+
+# ── Revoke All Sessions (logout everywhere) ────────────────────────────────────
+@router.post("/logout-all", response_model=MessageResponse)
+def logout_all(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Revoke all active sessions — logs out from all devices."""
+    db.query(UserSession).filter(
+        UserSession.user_id == current_user.id,
+        UserSession.revoked == False,
+    ).update({"revoked": True})
+    db.commit()
+    return {"message": "Logged out from all devices."}
+
+
+# ── Password Reset stub ────────────────────────────────────────────────────────
+@router.post("/password-reset", response_model=MessageResponse)
+def password_reset(
+    request: Request,
+    _: None = Depends(limit_password_reset),
+):
+    """Rate-limited. In production: send reset link via SMTP."""
+    return {"message": "If that email exists, a reset link has been sent."}

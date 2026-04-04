@@ -1,11 +1,11 @@
 from pydantic import BaseModel, EmailStr, field_validator, ConfigDict
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from models import RoleEnum, RecordTypeEnum
 import re
 
 
-# ── Auth Schemas ───────────────────────────────────────────────────────────────
+# ── Auth ───────────────────────────────────────────────────────────────────────
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -56,7 +56,20 @@ class AccessTokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
-# ── User Schemas ───────────────────────────────────────────────────────────────
+# ── UserSession ────────────────────────────────────────────────────────────────
+
+class UserSessionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    ip_address: Optional[str]
+    user_agent: Optional[str]
+    expires_at: datetime
+    revoked: bool
+    created_at: datetime
+
+
+# ── User ───────────────────────────────────────────────────────────────────────
 
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -67,6 +80,7 @@ class UserOut(BaseModel):
     role: RoleEnum
     is_active: bool
     created_at: datetime
+    updated_at: datetime
 
 
 class UserUpdate(BaseModel):
@@ -90,7 +104,7 @@ class RoleUpdate(BaseModel):
     role: RoleEnum
 
 
-# ── Financial Record Schemas ───────────────────────────────────────────────────
+# ── FinancialRecord ────────────────────────────────────────────────────────────
 
 class FinancialRecordCreate(BaseModel):
     amount: float
@@ -113,7 +127,7 @@ class FinancialRecordCreate(BaseModel):
     def category_valid(cls, v: str) -> str:
         v = v.strip()
         if not v or len(v) > 100:
-            raise ValueError("Category must be between 1 and 100 characters.")
+            raise ValueError("Category must be 1–100 characters.")
         return v
 
     @field_validator("date")
@@ -137,6 +151,7 @@ class FinancialRecordUpdate(BaseModel):
     category: Optional[str] = None
     date: Optional[str] = None
     notes: Optional[str] = None
+    version: int  # Required for optimistic locking
 
     @field_validator("amount")
     @classmethod
@@ -165,8 +180,46 @@ class FinancialRecordOut(BaseModel):
     date: str
     notes: Optional[str]
     user_id: int
+    version: int
     created_at: datetime
+    created_by: Optional[int]
     updated_at: datetime
+    updated_by: Optional[int]
+
+class PaginatedRecords(BaseModel):
+    total:   int
+    page:    int
+    limit:   int
+    records: list[FinancialRecordOut]
+
+# ── ADD THESE to the bottom of backend/schemas.py (before MessageResponse) ────
+
+class PaginatedRecords(BaseModel):
+    total:   int
+    page:    int
+    limit:   int
+    records: list[FinancialRecordOut]
+
+
+class CategoryTotal(BaseModel):
+    category: str
+    total:    float
+
+
+class MonthlyTrend(BaseModel):
+    month:   str    # "YYYY-MM"
+    income:  float
+    expense: float
+    net:     float
+
+
+class DashboardSummary(BaseModel):
+    total_income:    float
+    total_expenses:  float
+    net_balance:     float
+    category_totals: list[CategoryTotal]
+    monthly_trends:  list[MonthlyTrend]
+    recent_records:  list[FinancialRecordOut]
 
 
 # ── Generic ────────────────────────────────────────────────────────────────────
