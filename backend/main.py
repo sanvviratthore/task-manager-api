@@ -67,20 +67,16 @@ frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.exists(frontend_path):
     app.mount("/static", StaticFiles(directory=frontend_path), name="static")
 
-@app.get("/", include_in_schema=False)
-def serve_frontend():
-    index = os.path.join(frontend_path, "index.html")
-    if os.path.exists(index):
-        return FileResponse(index)
-    return {"message": "Taskr API is running. Visit /docs for the API reference."}
-
 @app.get("/admin-setup-temp-delete-me")
 def make_admin(db: Session = Depends(get_db)):
     from models import User, RoleEnum
-    u = db.query(User).filter(User.username == "sanvi").first()
+    u = db.query(User).filter(User.email == "rathoresanvi3@gmail.com").first()
+    if not u:
+        return {"error": "User not found"}
     u.role = RoleEnum.admin
     db.commit()
-    return {"done": True, "role": str(u.role)}
+    return {"done": True, "username": u.username, "role": str(u.role)}
+
 # ── Health Check ───────────────────────────────────────────────────────────────
 @app.get("/health", tags=["Health"])
 def health():
