@@ -9,20 +9,7 @@ A secure, role-based finance dashboard backend built with FastAPI, PostgreSQL, J
 
 ## Overview
 
-This project was originally built as a task management API with JWT auth, RBAC, and rate limiting. It was extended into a full finance dashboard backend — covering financial records management, dashboard analytics, and multi-role access control — for a backend engineering assignment.
-
-| Assignment Requirement | Status | Notes |
-|---|---|---|
-| User management (create, update, deactivate) | ✅ | `/api/v1/users/` endpoints |
-| Role-based access control (Viewer / Analyst / Admin) | ✅ | `require_role()` guard in `auth.py` |
-| Financial records CRUD | ✅ | `/api/v1/finance/` endpoints |
-| Dashboard summary APIs | ✅ | `/api/v1/dashboard/` endpoints |
-| Input validation | ✅ | Pydantic v2 schemas with custom validators |
-| Optimistic locking | ✅ | `version` field on `FinancialRecord` prevents lost updates |
-| Pagination | ✅ | `page` + `limit` query params on record listing |
-| Rate limiting | ✅ | Sliding-window per-IP limiter |
-| JWT authentication | ✅ | Short-lived access tokens + revocable refresh tokens |
-| PostgreSQL persistence | ✅ | Deployed on Render with persistent Postgres |
+This project was originally built as a task management API with JWT auth, RBAC, and rate limiting. It was extended into a full finance dashboard backend — covering financial records management, dashboard analytics, and multi-role access control.
 
 ---
 
