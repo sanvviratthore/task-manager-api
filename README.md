@@ -9,7 +9,7 @@ A secure, role-based finance dashboard backend built with FastAPI, PostgreSQL, J
 
 ## Overview
 
-This project was originally built as a task management API with JWT auth, RBAC, and rate limiting. It was extended into a full finance dashboard backend — covering financial records management, dashboard analytics, and multi-role access control.
+This project was originally built as a task management API with JWT auth, RBAC, and rate limiting. It was extended into a full finance dashboard backend covering financial records management, dashboard analytics, and multi-role access control.
 
 ---
 
@@ -107,7 +107,7 @@ uvicorn main:app --reload --port 8000
 
 | Method | Endpoint | Role | Description |
 |---|---|---|---|
-| GET | `/api/v1/dashboard/summary` | Any | Full summary — totals, trends, categories, recent |
+| GET | `/api/v1/dashboard/summary` | Any | Full summary totals, trends, categories, recent |
 | GET | `/api/v1/dashboard/totals` | Any | Total income, expenses, net balance |
 | GET | `/api/v1/dashboard/category-breakdown` | Any | Per-category totals |
 | GET | `/api/v1/dashboard/monthly-trends` | Any | Monthly income vs expense trends |
@@ -123,7 +123,7 @@ uvicorn main:app --reload --port 8000
 | analyst | ✅ | ✅ | ❌ | ❌ | ❌ |
 | admin | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-Access control is enforced at the router layer via FastAPI dependencies — not just the frontend. Unauthorized requests return `403 Forbidden` before any business logic runs.
+Access control is enforced at the router layer via FastAPI dependencies not just the frontend. Unauthorized requests return `403 Forbidden` before any business logic runs.
 
 The first user to register automatically receives the `admin` role.
 
@@ -211,7 +211,7 @@ task-manager-api/
 
 ## Assumptions & Tradeoffs
 
-- **Optimistic locking** on `FinancialRecord` via a `version` field — updates require the client to send the current version, preventing lost updates when two users edit simultaneously. Returns `409 Conflict` on mismatch.
+- **Optimistic locking** on `FinancialRecord` via a `version` field updates require the client to send the current version, preventing lost updates when two users edit simultaneously. Returns `409 Conflict` on mismatch.
 - **Viewer and Analyst have identical read permissions** in this implementation. The distinction is preserved in the DB and easy to extend.
 - **In-memory rate limiter** resets on server restart and doesn't work across multiple instances. Swap with Redis + `slowapi` for production.
 - **Dashboard aggregation** is done in Python for readability. For large datasets, SQL-level aggregates would be more efficient.
@@ -223,7 +223,7 @@ task-manager-api/
 
 - Access tokens expire in 15 minutes; refresh tokens expire in 7 days and are stored in DB so they can be revoked individually or all at once
 - bcrypt password hashing with minimum strength enforced at schema level (8+ chars, 1 uppercase, 1 digit)
-- Login failures return identical errors whether the user exists or not — prevents user enumeration
+- Login failures return identical errors whether the user exists or not prevents user enumeration
 - All input validated by Pydantic v2 before reaching route handlers
 - Explicit CORS allowlist configured via `ALLOWED_ORIGINS` env var
-- Token type (`access` / `refresh`) embedded in payload — prevents using a refresh token as an access token
+- Token type (`access` / `refresh`) embedded in payload prevents using a refresh token as an access token
